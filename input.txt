@@ -1,7 +1,3 @@
-1 5
-0 1
-0 0 10 100 0 0 0
-1 2 6 100 0 0 0
-2 4 2 100 0 0 0
-3 5 5 100 0 0 0
-4 7 2 100 0 0 0
+Visualize, Create, Share.
+
+Degica is pleased to announce their latest installment to the 'Maker' series of game development tools, Visual Novel Maker. A revolutionary new tool for Visual Novel Creation aimed towards aspiring artists and writers to bring their stories to life. Visual Novel Maker is developed by André Radomski.
