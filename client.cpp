@@ -15,28 +15,32 @@ using namespace std;
 //the package will br transport between client & server
 typedef struct Package
 {
-    int num;                //the ID of package 
-    char databuf[1024];     //the data this package contain
+    int num;            //the ID of package
+    char databuf[1024]; //the data this package contain
 } Package;
 
 struct sockaddr_in localSock;
 struct ip_mreq group;
 
-Package package;            //package to be transport
+Package package; //package to be transport
 
-int sd;                     //socket number
-int datasize;               //the entire datasize of the file
-int nowrecv_datasize = 0;   //the received datasize of the file
-int packagenum = 0;         //the newest package ID I receive
+int sd;                   //socket number
+int datasize;             //the entire datasize of the file
+int nowrecv_datasize = 0; //the received datasize of the file
+int packagenum = 0;       //the newest package ID I receive
 
-char namebuffer[128];       //this array to receive file name
-char sizebuffer[128];       //this array to receive file size
-char filename[128];         //this array to save file name without directory name
+char namebuffer[128]; //this array to receive file name
+char sizebuffer[128]; //this array to receive file size
+char filename[128];   //this array to save file name without directory name
+char typebuffer[128]; //this array to receive type
+char outputbuffer[1024] = "";
 
 int main(int argc, char *argv[])
 {
-    char *ip = argv[1];         //Ip of local address (you can check your by typing "iconfig" on terminal)
-    int port = atoi(argv[2]);   //the port the socket connet with
+    char *ip = argv[1];       //Ip of local address (you can check your by typing "iconfig" on terminal)
+    int port = atoi(argv[2]); //the port the socket connet with
+
+    FILE *to; //file I/O
 
     /* Create a datagram socket on which to receive. */
     sd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -97,12 +101,17 @@ int main(int argc, char *argv[])
     memset(sizebuffer, 0, 128);
     memset(namebuffer, 0, 128);
     memset(filename, 0, 128);
+    memset(typebuffer, 0, 128);
 
-    //receiver file name
+    //receive type
+    read(sd, typebuffer, 128);
+    cout << "receive file name: " << typebuffer << endl;
+
+    //receive file name
     read(sd, namebuffer, 128);
     cout << "receive file name: " << namebuffer << endl;
 
-    //receiver data size
+    //receive data size
     read(sd, sizebuffer, 128);
     datasize = atoi(sizebuffer);
     cout << "receive data size:" << datasize << endl;
@@ -110,27 +119,38 @@ int main(int argc, char *argv[])
     //create the output directory
     mkdir("output", 0777);
 
-    //create the new file
-    sprintf(filename, "output/%s", strrchr(namebuffer, '/') == nullptr ? namebuffer : strrchr(namebuffer, '/') + 1);
-    int to = creat(filename, 0777);
-    if (to < 0)
+    if (strcmp("file", typebuffer) == 0)    //receive file
     {
-        cout << "Error creating destination file\n";
-    }
+        //create the new file
+        sprintf(filename, "output/%s", strrchr(namebuffer, '/') == nullptr ? namebuffer : strrchr(namebuffer, '/') + 1);
+        //int to = creat(filename, 0777);
+        to = fopen(filename, "wb+");
+        if (to < 0)
+        {
+            cout << "Error creating destination file\n";
+        }
 
-    /* Read from the socket. */
-    while (nowrecv_datasize < datasize)
+        /* Read from the socket. */
+        while (nowrecv_datasize < datasize)
+        {
+            read(sd, &package, sizeof(package));
+            if (packagenum - package.num == 0) //it means package isn't drop
+            {
+                //write(to, package.databuf, sizeof(package.databuf));
+                fwrite(package.databuf, 1, sizeof(package.databuf), to);
+                nowrecv_datasize += 1024; //update the datasize I receive
+                ++packagenum;             //update the newest package num I recieve
+            }
+        }
+        fclose(to);
+    }
+    else        //receive msg
     {
         read(sd, &package, sizeof(package));
-        if (packagenum - package.num == 0)  //it means package isn't drop
-        {
-            write(to, package.databuf, sizeof(package.databuf));
-            nowrecv_datasize += 1024;       //update the datasize I receive
-            ++packagenum;                   //update the newest package num I recieve
-        }
+        sprintf(outputbuffer, "%s", package.databuf);
+        printf("ths msg is:%s\n", outputbuffer);
     }
 
-    close(to);
     close(sd);
     printf("Reading datagram message...OK.\n");
 
