@@ -119,7 +119,7 @@ int main(int argc, char *argv[])
     //create the output directory
     mkdir("output", 0777);
 
-    if (strcmp("file", typebuffer) == 0)    //receive file
+    if (strcmp("file", typebuffer) == 0) //receive file
     {
         //create the new file
         sprintf(filename, "output/%s", strrchr(namebuffer, '/') == nullptr ? namebuffer : strrchr(namebuffer, '/') + 1);
@@ -137,14 +137,17 @@ int main(int argc, char *argv[])
             if (packagenum - package.num == 0) //it means package isn't drop
             {
                 //write(to, package.databuf, sizeof(package.databuf));
-                fwrite(package.databuf, 1, sizeof(package.databuf), to);
+                if (strcmp(strrchr(namebuffer, '.') + 1, "txt") != 0)
+                    fwrite(package.databuf, 1, sizeof(package.databuf), to);
+                else
+                    fwrite(package.databuf, 1, strlen(package.databuf), to);
                 nowrecv_datasize += 1024; //update the datasize I receive
                 ++packagenum;             //update the newest package num I recieve
             }
         }
         fclose(to);
     }
-    else        //receive msg
+    else //receive msg
     {
         read(sd, &package, sizeof(package));
         sprintf(outputbuffer, "%s", package.databuf);
