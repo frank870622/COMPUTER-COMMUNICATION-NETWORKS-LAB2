@@ -9,6 +9,7 @@
 #include <memory.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <iostream>
 using namespace std;
 
@@ -24,10 +25,14 @@ struct ip_mreq group;
 
 Package package; //package to be transport
 
-int sd;                   //socket number
-int datasize;             //the entire datasize of the file
-int nowrecv_datasize = 0; //the received datasize of the file
-int packagenum = 0;       //the newest package ID I receive
+int sd;                      //socket number
+int datasize;                //the entire datasize of the file
+int nowrecv_datasize = 0;    //the received datasize of the file
+int all_package_num = 0;     //the all package number of the file
+int packagenum = 0;          //the newest package ID I receive
+int past_package_num = -1;   //the earlier package ID I recieve
+int receive_pageage_num = 0; //the package number i receive
+bool send_file_flag = true;  //the flag to indicate the server send one turn of file
 
 char namebuffer[128]; //this array to receive file name
 char sizebuffer[128]; //this array to receive file size
@@ -130,10 +135,19 @@ int main(int argc, char *argv[])
             cout << "Error creating destination file\n";
         }
 
+        all_package_num = ceil((float)datasize / (float)1024);
+
         /* Read from the socket. */
         while (nowrecv_datasize < datasize)
         {
-            read(sd, &package, sizeof(package));
+            read(sd, &package, sizeof(package));    //receive
+
+            if (package.num > past_package_num && send_file_flag)
+                ++receive_pageage_num;
+            else
+                send_file_flag = false;
+            past_package_num = package.num;
+
             if (packagenum - package.num == 0) //it means package isn't drop
             {
                 //write(to, package.databuf, sizeof(package.databuf));
@@ -156,6 +170,9 @@ int main(int argc, char *argv[])
 
     close(sd);
     printf("Reading datagram message...OK.\n");
+    printf("all_package_num is: %d\n", all_package_num);
+    printf("receive_pageage_num is: %d\n", receive_pageage_num);
+    printf("the miss rate is: %f\n", (float)(all_package_num - receive_pageage_num) / (float)all_package_num);
 
     return 0;
 }

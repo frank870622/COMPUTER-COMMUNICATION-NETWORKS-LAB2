@@ -120,6 +120,8 @@ int main(int argc, char *argv[])
     sendto(sd, sizebuffer, sizeof(sizebuffer), 0,
            (struct sockaddr *)&groupSock, sizeof(groupSock));
 
+    sleep(1);    //take a rest
+
     /* Send a message to the multicast group specified by the*/
     /* groupSock sockaddr structure. */
     if (strcmp("file", sendtype) == 0)
@@ -134,7 +136,7 @@ int main(int argc, char *argv[])
             }
             printf("Sending datagram message...OK\n");
             fseek(File, 0, SEEK_SET); //reset the fileread pointer to start of file
-            sleep(1);
+            sleep(0.5);
         }
     else        //send msg
     {
