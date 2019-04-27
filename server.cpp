@@ -28,14 +28,16 @@ int datasize;         //the entire datasize of the file
 int packagenum;       //the newest package ID I send
 char sizebuffer[128]; //this array to receive file size
 char namebuffer[128]; //this array to receive file name
-char typebuffer[128]; //this array to send type
+char modebuffer[128]; //this array to send mode
 
 int main(int argc, char *argv[])
 {
     char *ip = argv[1];       //Ip of local address (you can check your by typing "iconfig" on terminal)
     int port = atoi(argv[2]); //the port the socket connet with
     char *filename = argv[3]; //the file name (or msg)
-    char *sendtype = argv[4];     //choose file or msg
+    char *sendmode = argv[4]; //choose mode: normal, fec, slow
+                              //fec : it will send redundent package to sender, it will add package number
+                              //slow : server will send package more slowly, it witt reduce package miss rate
 
     FILE *File; //read file
 
@@ -87,32 +89,24 @@ int main(int argc, char *argv[])
     memset(package.databuf, 0, 1024);
     memset(sizebuffer, 0, 128);
     memset(namebuffer, 0, 128);
+    memset(modebuffer, 0, 128);
 
     //open file which want to send
-    if (strcmp("file", sendtype) == 0)
-    {
-        File = fopen(filename, "rb");
+    File = fopen(filename, "rb");
 
-        //get datasize and save into a local integer
-        fseek(File, 0, SEEK_END);
-        datasize = ftell(File);
-        fseek(File, 0, SEEK_SET);
-    }
-    else{
-        datasize = strlen(filename);
-    }
-
-    //send type to receiver
-    sprintf(typebuffer, "%s", sendtype);
-    sendto(sd, typebuffer, sizeof(typebuffer), 0,
-           (struct sockaddr *)&groupSock, sizeof(groupSock));
+    //get datasize and save into a local integer
+    fseek(File, 0, SEEK_END);
+    datasize = ftell(File);
+    fseek(File, 0, SEEK_SET);
 
     //send file name to receiver
-    if (strcmp("file", sendtype) == 0)
-        sprintf(namebuffer, "%s", filename);
-    else
-        sprintf(namebuffer, "%s", "nothing.txt");
+    sprintf(namebuffer, "%s", filename);
     sendto(sd, namebuffer, sizeof(namebuffer), 0,
+           (struct sockaddr *)&groupSock, sizeof(groupSock));
+
+    //send sendmode to receiver
+    sprintf(modebuffer, "%s", sendmode);
+    sendto(sd, modebuffer, sizeof(modebuffer), 0,
            (struct sockaddr *)&groupSock, sizeof(groupSock));
 
     //send data size to receiver
@@ -120,36 +114,35 @@ int main(int argc, char *argv[])
     sendto(sd, sizebuffer, sizeof(sizebuffer), 0,
            (struct sockaddr *)&groupSock, sizeof(groupSock));
 
-    sleep(1);    //take a rest
+    sleep(1); //take a rest
 
     /* Send a message to the multicast group specified by the*/
     /* groupSock sockaddr structure. */
-    if (strcmp("file", sendtype) == 0)
-        while (1) //keep sending file
-        {
-            packagenum = 0;                                   //reset package ID
-            while (fread(package.databuf, 1, 1024, File) > 0) //not end of file
-            {
-                package.num = packagenum; //set package ID
-                sendto(sd, &package, sizeof(package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
-                ++packagenum; //set next package ID
-            }
-            printf("Sending datagram message...OK\n");
-            fseek(File, 0, SEEK_SET); //reset the fileread pointer to start of file
-            sleep(0.5);
-        }
-    else        //send msg
-    {
-        packagenum = 0;     //only one package
-        sprintf(package.databuf, "%s", filename);  //in sending msg, the array:filename is store the msg which will be send
-        while (1)
-        {
-            sendto(sd, &package, sizeof(package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
-            printf("Sending datagram message...OK\n %s\n", package.databuf);
-            sleep(1);
-        }
-    }
 
+    while (1) //keep sending file
+    {
+        packagenum = 0;                                   //reset package ID
+        while (fread(package.databuf, 1, 1024, File) > 0) //not end of file
+        {
+            package.num = packagenum; //set package ID
+            if (strcmp(sendmode, "normal") == 0)
+                sendto(sd, &package, sizeof(package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
+            else if (strcmp(sendmode, "fec") == 0)
+            {
+                for (int i = 0; i < 3; i++)
+                    sendto(sd, &package, sizeof(package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
+            }
+            else if (strcmp(sendmode, "slow") == 0)
+            {
+                sendto(sd, &package, sizeof(package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
+                sleep(0.001);
+            }
+            ++packagenum; //set next package ID
+        }
+        printf("Sending datagram message...OK\n");
+        fseek(File, 0, SEEK_SET); //reset the fileread pointer to start of file
+        sleep(0.6);
+    }
     /* Try the re-read from the socket if the loopback is not disable
 	if(read(sd, databuf, datalen) < 0)
 	{

@@ -25,19 +25,21 @@ struct ip_mreq group;
 
 Package package; //package to be transport
 
-int sd;                      //socket number
-int datasize;                //the entire datasize of the file
-int nowrecv_datasize = 0;    //the received datasize of the file
-int all_package_num = 0;     //the all package number of the file
-int packagenum = 0;          //the newest package ID I receive
-int past_package_num = -1;   //the earlier package ID I recieve
-int receive_pageage_num = 0; //the package number i receive
-bool send_file_flag = true;  //the flag to indicate the server send one turn of file
+int sd;                            //socket number
+int datasize;                      //the entire datasize of the file
+int nowrecv_datasize = 0;          //the received datasize of the file
+int all_package_num = 0;           //the all package number of the file
+int packagenum = 0;                //the newest package ID I receive
+int past_package_num = -1;         //the earlier package ID I recieve
+int receive_pageage_num = 0;       //the package number i receive
+int first_broadcast_data_size = 0; //the first_broadcast_data_size
+float file_integrity = 0;          //file integrity of first broadcast
+bool send_file_flag = true;        //the flag to indicate the server send one turn of file
 
 char namebuffer[128]; //this array to receive file name
 char sizebuffer[128]; //this array to receive file size
 char filename[128];   //this array to save file name without directory name
-char typebuffer[128]; //this array to receive type
+char modebuffer[128]; //this array to save sendmode
 char outputbuffer[1024] = "";
 
 int main(int argc, char *argv[])
@@ -106,15 +108,15 @@ int main(int argc, char *argv[])
     memset(sizebuffer, 0, 128);
     memset(namebuffer, 0, 128);
     memset(filename, 0, 128);
-    memset(typebuffer, 0, 128);
-
-    //receive type
-    read(sd, typebuffer, 128);
-    cout << "receive file name: " << typebuffer << endl;
+    memset(modebuffer, 0, 128);
 
     //receive file name
     read(sd, namebuffer, 128);
     cout << "receive file name: " << namebuffer << endl;
+
+    //receive send mode
+    read(sd, modebuffer, 128);
+    cout << "receive send mode: " << modebuffer << endl;
 
     //receive data size
     read(sd, sizebuffer, 128);
@@ -124,55 +126,64 @@ int main(int argc, char *argv[])
     //create the output directory
     mkdir("output", 0777);
 
-    if (strcmp("file", typebuffer) == 0) //receive file
+    //create the new file
+    sprintf(filename, "output/%s", strrchr(namebuffer, '/') == nullptr ? namebuffer : strrchr(namebuffer, '/') + 1);
+    //int to = creat(filename, 0777);
+    to = fopen(filename, "wb+");
+    if (to < 0)
     {
-        //create the new file
-        sprintf(filename, "output/%s", strrchr(namebuffer, '/') == nullptr ? namebuffer : strrchr(namebuffer, '/') + 1);
-        //int to = creat(filename, 0777);
-        to = fopen(filename, "wb+");
-        if (to < 0)
+        cout << "Error creating destination file\n";
+    }
+
+    all_package_num = ceil((float)datasize / (float)1024);
+
+    /* Read from the socket. */
+    while (nowrecv_datasize < datasize)
+    {
+        read(sd, &package, sizeof(package)); //receive
+
+        if (package.num >= past_package_num && send_file_flag)
         {
-            cout << "Error creating destination file\n";
+            ++receive_pageage_num;
+            if (package.num > past_package_num)
+                first_broadcast_data_size += 1024;
         }
-
-        all_package_num = ceil((float)datasize / (float)1024);
-
-        /* Read from the socket. */
-        while (nowrecv_datasize < datasize)
+        else
         {
-            read(sd, &package, sizeof(package));    //receive
+            send_file_flag = false;
+        }
+        past_package_num = package.num;
 
-            if (package.num > past_package_num && send_file_flag)
-                ++receive_pageage_num;
+        if (packagenum == package.num) //it means package isn't drop
+        {
+            //write(to, package.databuf, sizeof(package.databuf));
+            if (strcmp(strrchr(namebuffer, '.') + 1, "txt") != 0)
+                fwrite(package.databuf, 1, sizeof(package.databuf), to);
             else
-                send_file_flag = false;
-            past_package_num = package.num;
-
-            if (packagenum - package.num == 0) //it means package isn't drop
-            {
-                //write(to, package.databuf, sizeof(package.databuf));
-                if (strcmp(strrchr(namebuffer, '.') + 1, "txt") != 0)
-                    fwrite(package.databuf, 1, sizeof(package.databuf), to);
-                else
-                    fwrite(package.databuf, 1, strlen(package.databuf), to);
-                nowrecv_datasize += 1024; //update the datasize I receive
-                ++packagenum;             //update the newest package num I recieve
-            }
+                fwrite(package.databuf, 1, strlen(package.databuf), to);
+            nowrecv_datasize += 1024; //update the datasize I receive
+            ++packagenum;             //update the newest package num I recieve
         }
-        fclose(to);
     }
-    else //receive msg
-    {
-        read(sd, &package, sizeof(package));
-        sprintf(outputbuffer, "%s", package.databuf);
-        printf("ths msg is:%s\n", outputbuffer);
-    }
+    fclose(to);
+
+    if (first_broadcast_data_size < datasize)
+        file_integrity = (float)first_broadcast_data_size / (float)datasize;
+    else
+        file_integrity = 1;
 
     close(sd);
     printf("Reading datagram message...OK.\n");
-    printf("all_package_num is: %d\n", all_package_num);
+    if (strcmp(modebuffer, "fec") == 0)
+        printf("all_package_num is: %d\n", all_package_num * 3);
+    else
+        printf("all_package_num is: %d\n", all_package_num);
     printf("receive_pageage_num is: %d\n", receive_pageage_num);
-    printf("the miss rate is: %f\n", (float)(all_package_num - receive_pageage_num) / (float)all_package_num);
+    if (strcmp(modebuffer, "fec") == 0)
+        printf("the package miss rate of first broadcast is: %f\n", (float)((all_package_num * 3) - receive_pageage_num) / (float)(all_package_num * 3));
+    else
+        printf("the package miss rate of first broadcast is: %f\n", (float)(all_package_num - receive_pageage_num) / (float)all_package_num);
+    printf("file integrity of first broadcast is: %f\n", file_integrity);
 
     return 0;
 }
