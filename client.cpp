@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <iostream>
+#include <vector>
 using namespace std;
 
 //the package will br transport between client & server
@@ -19,6 +20,23 @@ typedef struct Package
     int num;            //the ID of package
     char databuf[1024]; //the data this package contain
 } Package;
+
+//redunt part of a fec package
+typedef struct Redunt_part
+{
+    int num = -1;
+    int part = -1;
+    char databuf[256] = "";
+} Redunt_part;
+//fec package
+
+typedef struct Fec_package
+{
+    int fec_set = -1;
+    int fec_check = -1;
+    Redunt_part redunt_Part[4];
+    Package package;
+} Fec_package;
 
 struct sockaddr_in localSock;
 struct ip_mreq group;
@@ -29,7 +47,7 @@ int sd;                            //socket number
 int datasize;                      //the entire datasize of the file
 int nowrecv_datasize = 0;          //the received datasize of the file
 int all_package_num = 0;           //the all package number of the file
-int packagenum = 0;                //the newest package ID I receive
+float packagenum = 0;              //the newest package ID I receive
 int past_package_num = -1;         //the earlier package ID I recieve
 int receive_pageage_num = 0;       //the package number i receive
 int first_broadcast_data_size = 0; //the first_broadcast_data_size
@@ -138,31 +156,191 @@ int main(int argc, char *argv[])
     all_package_num = ceil((float)datasize / (float)1024);
 
     /* Read from the socket. */
-    while (nowrecv_datasize < datasize)
+    if (strcmp(modebuffer, "fec") != 0)
     {
-        read(sd, &package, sizeof(package)); //receive
+        while (nowrecv_datasize < datasize)
+        {
+            read(sd, &package, sizeof(package)); //receive
 
-        if (package.num >= past_package_num && send_file_flag)
-        {
-            ++receive_pageage_num;
-            if (package.num > past_package_num)
-                first_broadcast_data_size += 1024;
-        }
-        else
-        {
-            send_file_flag = false;
-        }
-        past_package_num = package.num;
-
-        if (packagenum == package.num) //it means package isn't drop
-        {
-            //write(to, package.databuf, sizeof(package.databuf));
-            if (strcmp(strrchr(namebuffer, '.') + 1, "txt") != 0)
-                fwrite(package.databuf, 1, sizeof(package.databuf), to);
+            if (package.num >= past_package_num && send_file_flag)
+            {
+                ++receive_pageage_num;
+                if (package.num > past_package_num)
+                    first_broadcast_data_size += 1024;
+            }
             else
-                fwrite(package.databuf, 1, strlen(package.databuf), to);
-            nowrecv_datasize += 1024; //update the datasize I receive
-            ++packagenum;             //update the newest package num I recieve
+            {
+                send_file_flag = false;
+            }
+            past_package_num = package.num;
+
+            if (packagenum == package.num) //it means package isn't drop
+            {
+                //write(to, package.databuf, sizeof(package.databuf));
+                if (strcmp(strrchr(namebuffer, '.') + 1, "txt") != 0)
+                    fwrite(package.databuf, 1, sizeof(package.databuf), to);
+                else
+                    fwrite(package.databuf, 1, strlen(package.databuf), to);
+                nowrecv_datasize += 1024; //update the datasize I receive
+                ++packagenum;             //update the newest package num I recieve
+            }
+        }
+    }
+    else //fec part
+    {
+        vector<Fec_package> receive_vector; //a vector to receive package
+        int fec_set_package_count = 0;      //how many fec package with same set_number I received this time
+        int fec_set = 0;                    //the fec set_number this time
+        while (nowrecv_datasize < datasize)
+        {
+            fec_set_package_count = 0; //reset fec_set_package_count
+
+            while (receive_vector.size() < 5) //read package until 5 package in the vector
+            {
+                Fec_package fec_package;
+                read(sd, &fec_package, sizeof(Fec_package));
+                receive_vector.push_back(fec_package);
+
+                if (fec_package.package.num >= past_package_num && send_file_flag)
+                {
+                    ++receive_pageage_num;
+                    if (fec_package.package.num > past_package_num)
+                        first_broadcast_data_size += 1024;
+                }
+                else
+                {
+                    send_file_flag = false;
+                }
+                past_package_num = package.num;
+            }
+
+            fec_set = receive_vector[0].fec_set; //get set_number
+
+            for (int i = 0; i < 5; i++) //get fec_set_package_count
+            {
+                if (fec_set == receive_vector[i].fec_set)
+                    ++fec_set_package_count;
+            }
+
+            // means all of this set's package have received
+            if (fec_set_package_count == 5)
+            {
+                for (int i = 0; i < 5; i++)
+                {
+                    if (packagenum == receive_vector[i].package.num) //it means package isn't drop
+                    {
+                        //write(to, package.databuf, sizeof(package.databuf));
+                        if (strcmp(strrchr(namebuffer, '.') + 1, "txt") != 0)
+                            fwrite(receive_vector[i].package.databuf, 1, sizeof(receive_vector[i].package.databuf), to);
+                        else
+                            fwrite(receive_vector[i].package.databuf, 1, strlen(receive_vector[i].package.databuf), to);
+                        nowrecv_datasize += 1024; //update the datasize I receive
+                        ++packagenum;             //update the newest package num I recieve
+                    }
+                }
+                if (nowrecv_datasize >= datasize)
+                    break;
+            } //fec_set_package_count = 4,means one package missed, and it can be construct by other four package
+            else if (fec_set_package_count == 4)
+            {
+                int check = 10;
+                int miss_package_num = -1;
+                for (int i = 0; i < 4; i++)
+                {
+                    check -= receive_vector[i].fec_check;
+                }
+                if (check == 0)
+                    miss_package_num = 0;
+                else if (check == 1)
+                    miss_package_num = 1;
+                else if (check == 2)
+                    miss_package_num = 2;
+                else if (check == 3)
+                    miss_package_num = 3;
+                else if (check == 4)
+                    miss_package_num = 4;
+                else
+                {
+                    printf("error at miss package num check\n");
+                    exit(1);
+                }
+                for (int i = 0; i < miss_package_num; i++)
+                {
+                    if (packagenum == receive_vector[i].package.num) //it means package isn't drop
+                    {
+                        //write(to, package.databuf, sizeof(package.databuf));
+                        if (strcmp(strrchr(namebuffer, '.') + 1, "txt") != 0)
+                            fwrite(receive_vector[i].package.databuf, 1, sizeof(receive_vector[i].package.databuf), to);
+                        else
+                            fwrite(receive_vector[i].package.databuf, 1, strlen(receive_vector[i].package.databuf), to);
+                        nowrecv_datasize += 1024; //update the datasize I receive
+                        ++packagenum;             //update the newest package num I recieve
+                    }
+                }
+                if (nowrecv_datasize >= datasize)
+                    break;
+                int part_check = 0;
+                for (int i = 0; i < 4; i++)
+                {
+                    for (int j = 0; i < 4; i++)
+                    {
+                        if (receive_vector[i].redunt_Part[j].part == part_check)
+                        {
+                            ++part_check;
+                            if (packagenum == receive_vector[i].redunt_Part[j].num) //it means package isn't drop
+                            {
+                                //write(to, package.databuf, sizeof(package.databuf));
+                                if (strcmp(strrchr(namebuffer, '.') + 1, "txt") != 0)
+                                    fwrite(receive_vector[i].redunt_Part[j].databuf, 1, sizeof(receive_vector[i].redunt_Part[j].databuf), to);
+                                else
+                                    fwrite(receive_vector[i].redunt_Part[j].databuf, 1, strlen(receive_vector[i].redunt_Part[j].databuf), to);
+                                nowrecv_datasize += 256; //update the datasize I receive
+                                packagenum += 0.25;      //update the newest package num I recieve
+                            }
+                        }
+                    }
+                }
+
+                if (nowrecv_datasize >= datasize)
+                    break;
+                for (int i = miss_package_num; i < 4; i++)
+                {
+                    if (packagenum == receive_vector[i].package.num) //it means package isn't drop
+                    {
+                        //write(to, package.databuf, sizeof(package.databuf));
+                        if (strcmp(strrchr(namebuffer, '.') + 1, "txt") != 0)
+                            fwrite(receive_vector[i].package.databuf, 1, sizeof(receive_vector[i].package.databuf), to);
+                        else
+                            fwrite(receive_vector[i].package.databuf, 1, strlen(receive_vector[i].package.databuf), to);
+                        nowrecv_datasize += 1024; //update the datasize I receive
+                        ++packagenum;             //update the newest package num I recieve
+                    }
+                }
+                if (nowrecv_datasize >= datasize)
+                    break;
+            }
+            else
+            {
+                for (int i = 0; i < fec_set_package_count; i++)
+                {
+                    if (packagenum == receive_vector[i].package.num) //it means package isn't drop
+                    {
+                        //write(to, package.databuf, sizeof(package.databuf));
+                        if (strcmp(strrchr(namebuffer, '.') + 1, "txt") != 0)
+                            fwrite(receive_vector[i].package.databuf, 1, sizeof(receive_vector[i].package.databuf), to);
+                        else
+                            fwrite(receive_vector[i].package.databuf, 1, strlen(receive_vector[i].package.databuf), to);
+                        nowrecv_datasize += 1024; //update the datasize I receive
+                        ++packagenum;             //update the newest package num I recieve
+                    }
+                }
+            }
+
+            for (int i = 0; i < 5; i++)
+            {
+                if (receive_vector[0].fec_set == fec_set)
+                    receive_vector.erase(receive_vector.begin());
+            }
         }
     }
     fclose(to);
@@ -174,12 +352,14 @@ int main(int argc, char *argv[])
 
     close(sd);
     printf("Reading datagram message...OK.\n");
-    if (strcmp(modebuffer, "fec") == 0)
+    /*
+    if (strcmp(modebuffer, "multi") == 0)
         printf("all_package_num is: %d\n", all_package_num * 3);
     else
         printf("all_package_num is: %d\n", all_package_num);
     printf("receive_pageage_num is: %d\n", receive_pageage_num);
-    if (strcmp(modebuffer, "fec") == 0)
+    */
+    if (strcmp(modebuffer, "multi") == 0)
         printf("the package miss rate of first broadcast is: %f\n", (float)((all_package_num * 3) - receive_pageage_num) / (float)(all_package_num * 3));
     else
         printf("the package miss rate of first broadcast is: %f\n", (float)(all_package_num - receive_pageage_num) / (float)all_package_num);

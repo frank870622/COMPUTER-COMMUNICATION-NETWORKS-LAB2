@@ -13,9 +13,26 @@ using namespace std;
 //the package will br transport between client & server
 typedef struct Package
 {
-    int num;
+    int num = -1;
     char databuf[1024];
 } Package;
+
+//redunt part of a fec package
+typedef struct Redunt_part
+{
+    int num = -1;
+    int part = -1;
+    char databuf[256] = "";
+} Redunt_part;
+//fec package
+
+typedef struct Fec_package
+{
+    int fec_set = -1;
+    int fec_check = -1;
+    Redunt_part redunt_Part[4];
+    Package package;
+} Fec_package;
 
 struct in_addr localInterface;
 struct sockaddr_in groupSock;
@@ -118,30 +135,167 @@ int main(int argc, char *argv[])
 
     /* Send a message to the multicast group specified by the*/
     /* groupSock sockaddr structure. */
-
-    while (1) //keep sending file
+    if (strcmp(sendmode, "fec") != 0)
     {
-        packagenum = 0;                                   //reset package ID
-        while (fread(package.databuf, 1, 1024, File) > 0) //not end of file
+        while (1) //keep sending file
         {
-            package.num = packagenum; //set package ID
-            if (strcmp(sendmode, "normal") == 0)
-                sendto(sd, &package, sizeof(package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
-            else if (strcmp(sendmode, "fec") == 0)
+            packagenum = 0;                                   //reset package ID
+            while (fread(package.databuf, 1, 1024, File) > 0) //not end of file
             {
-                for (int i = 0; i < 3; i++)
+                package.num = packagenum; //set package ID
+                if (strcmp(sendmode, "normal") == 0)
                     sendto(sd, &package, sizeof(package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
+                else if (strcmp(sendmode, "multi") == 0)
+                {
+                    for (int i = 0; i < 3; i++)
+                        sendto(sd, &package, sizeof(package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
+                }
+                else if (strcmp(sendmode, "slow") == 0)
+                {
+                    sendto(sd, &package, sizeof(package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
+                    sleep(0.001);
+                }
+                ++packagenum; //set next package ID
             }
-            else if (strcmp(sendmode, "slow") == 0)
-            {
-                sendto(sd, &package, sizeof(package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
-                sleep(0.001);
-            }
-            ++packagenum; //set next package ID
+            printf("Sending datagram message...OK\n");
+            fseek(File, 0, SEEK_SET); //reset the fileread pointer to start of file
+            sleep(0.6);
         }
-        printf("Sending datagram message...OK\n");
-        fseek(File, 0, SEEK_SET); //reset the fileread pointer to start of file
-        sleep(0.6);
+    }
+    else
+    {
+        //fec mode
+        int fec_set_num = 0;   //which set is this package with? (one set have five packages)
+        bool eof_flag = false; //a flag to indicate end of file
+
+        while (1) //keep sending file
+        {
+            packagenum = 0;   //reset package ID
+            fec_set_num = 0;  //reset set number
+            eof_flag = false; //reset flag
+
+            while (1) //not end of file
+            {
+                if (eof_flag) //break at end of file
+                    break;
+
+                Fec_package fec_package[5]; //decline 5 fec packages
+
+                //move the file date to a set(five) of fec package
+                if (fread(fec_package[0].package.databuf, 1, 1024, File) <= 0 && !eof_flag)
+                    eof_flag = true; //if end of file, change the flag
+                else
+                {
+                    fec_package[0].package.num = packagenum;
+                    strncpy(fec_package[1].redunt_Part[0].databuf, fec_package[0].package.databuf, 256);
+                    fec_package[1].redunt_Part[0].num = packagenum;
+                    fec_package[1].redunt_Part[0].part = 0;
+                    strncpy(fec_package[2].redunt_Part[0].databuf, fec_package[0].package.databuf + 256, 256);
+                    fec_package[2].redunt_Part[0].num = packagenum;
+                    fec_package[2].redunt_Part[0].part = 1;
+                    strncpy(fec_package[3].redunt_Part[0].databuf, fec_package[0].package.databuf + 512, 256);
+                    fec_package[3].redunt_Part[0].num = packagenum;
+                    fec_package[3].redunt_Part[0].part = 2;
+                    strncpy(fec_package[4].redunt_Part[0].databuf, fec_package[0].package.databuf + 768, 256);
+                    fec_package[4].redunt_Part[0].num = packagenum;
+                    fec_package[4].redunt_Part[0].part = 3;
+                    ++packagenum;
+                }
+                if (fread(fec_package[1].package.databuf, 1, 1024, File) <= 0 && !eof_flag)
+                    eof_flag = true;
+                else
+                {
+                    fec_package[1].package.num = packagenum;
+                    strncpy(fec_package[0].redunt_Part[0].databuf, fec_package[1].package.databuf, 256);
+                    fec_package[0].redunt_Part[0].num = packagenum;
+                    fec_package[0].redunt_Part[0].part = 0;
+                    strncpy(fec_package[2].redunt_Part[1].databuf, fec_package[1].package.databuf + 256, 256);
+                    fec_package[2].redunt_Part[1].num = packagenum;
+                    fec_package[2].redunt_Part[1].part = 1;
+                    strncpy(fec_package[3].redunt_Part[1].databuf, fec_package[1].package.databuf + 512, 256);
+                    fec_package[3].redunt_Part[1].num = packagenum;
+                    fec_package[3].redunt_Part[1].part = 2;
+                    strncpy(fec_package[4].redunt_Part[1].databuf, fec_package[1].package.databuf + 768, 256);
+                    fec_package[4].redunt_Part[1].num = packagenum;
+                    fec_package[4].redunt_Part[1].part = 3;
+                    ++packagenum;
+                }
+                if (fread(fec_package[2].package.databuf, 1, 1024, File) <= 0 && !eof_flag)
+                    eof_flag = true;
+                else
+                {
+                    fec_package[2].package.num = packagenum;
+                    strncpy(fec_package[0].redunt_Part[1].databuf, fec_package[2].package.databuf, 256);
+                    fec_package[0].redunt_Part[1].num = packagenum;
+                    fec_package[0].redunt_Part[1].part = 0;
+                    strncpy(fec_package[1].redunt_Part[1].databuf, fec_package[2].package.databuf + 256, 256);
+                    fec_package[1].redunt_Part[1].num = packagenum;
+                    fec_package[1].redunt_Part[1].part = 1;
+                    strncpy(fec_package[3].redunt_Part[2].databuf, fec_package[2].package.databuf + 512, 256);
+                    fec_package[3].redunt_Part[2].num = packagenum;
+                    fec_package[3].redunt_Part[2].part = 2;
+                    strncpy(fec_package[4].redunt_Part[2].databuf, fec_package[2].package.databuf + 768, 256);
+                    fec_package[4].redunt_Part[2].num = packagenum;
+                    fec_package[4].redunt_Part[2].part = 3;
+                    ++packagenum;
+                }
+                if (fread(fec_package[3].package.databuf, 1, 1024, File) <= 0 && !eof_flag)
+                    eof_flag = true;
+                else
+                {
+                    fec_package[3].package.num = packagenum;
+                    strncpy(fec_package[0].redunt_Part[2].databuf, fec_package[3].package.databuf, 256);
+                    fec_package[0].redunt_Part[2].num = packagenum;
+                    fec_package[0].redunt_Part[2].part = 0;
+                    strncpy(fec_package[1].redunt_Part[2].databuf, fec_package[3].package.databuf + 256, 256);
+                    fec_package[1].redunt_Part[2].num = packagenum;
+                    fec_package[1].redunt_Part[2].part = 1;
+                    strncpy(fec_package[2].redunt_Part[2].databuf, fec_package[3].package.databuf + 512, 256);
+                    fec_package[2].redunt_Part[2].num = packagenum;
+                    fec_package[2].redunt_Part[2].part = 2;
+                    strncpy(fec_package[4].redunt_Part[3].databuf, fec_package[3].package.databuf + 768, 256);
+                    fec_package[4].redunt_Part[3].num = packagenum;
+                    fec_package[4].redunt_Part[3].part = 3;
+                    ++packagenum;
+                }
+                if (fread(fec_package[4].package.databuf, 1, 1024, File) <= 0 && !eof_flag)
+                    eof_flag = true;
+                else
+                {
+                    fec_package[4].package.num = packagenum;
+                    strncpy(fec_package[0].redunt_Part[3].databuf, fec_package[4].package.databuf, 256);
+                    fec_package[0].redunt_Part[3].num = packagenum;
+                    fec_package[0].redunt_Part[3].part = 0;
+                    strncpy(fec_package[1].redunt_Part[3].databuf, fec_package[4].package.databuf + 256, 256);
+                    fec_package[1].redunt_Part[3].num = packagenum;
+                    fec_package[1].redunt_Part[3].part = 1;
+                    strncpy(fec_package[2].redunt_Part[3].databuf, fec_package[4].package.databuf + 512, 256);
+                    fec_package[2].redunt_Part[3].num = packagenum;
+                    fec_package[2].redunt_Part[3].part = 2;
+                    strncpy(fec_package[3].redunt_Part[3].databuf, fec_package[4].package.databuf + 768, 256);
+                    fec_package[3].redunt_Part[3].num = packagenum;
+                    fec_package[3].redunt_Part[3].part = 3;
+                    ++packagenum;
+                }
+
+                //mark the check number and set_number
+                for (int i = 0; i < 5; i++)
+                {
+                    fec_package[i].fec_check = i;
+                    fec_package[i].fec_set = fec_set_num;
+                }
+                //send five package
+                sendto(sd, &fec_package[0], sizeof(Fec_package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
+                sendto(sd, &fec_package[1], sizeof(Fec_package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
+                sendto(sd, &fec_package[2], sizeof(Fec_package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
+                sendto(sd, &fec_package[3], sizeof(Fec_package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
+                sendto(sd, &fec_package[4], sizeof(Fec_package), 0, (struct sockaddr *)&groupSock, sizeof(groupSock));
+                ++fec_set_num; //add set_number
+            }
+            printf("Sending datagram message...OK\n");
+            fseek(File, 0, SEEK_SET); //reset the fileread pointer to start of file
+            sleep(0.6);
+        }
     }
     /* Try the re-read from the socket if the loopback is not disable
 	if(read(sd, databuf, datalen) < 0)
